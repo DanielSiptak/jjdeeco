@@ -47,9 +47,10 @@ import java.util.concurrent.CopyOnWriteArraySet;
  * into one class
  * 
  * @author Bela Ban
+ * @author Daniel Siptak
  */
-@Unsupported(comment="Use JBossCache instead")
-public class ReplicatedHashMap<K extends Serializable, V extends Serializable> extends
+//@Unsupported(comment="Use JBossCache instead")
+public class ReplicatedHashMapOld<K extends Serializable, V extends Serializable> extends
         AbstractMap<K,V> implements ConcurrentMap<K,V>, ExtendedReceiver, ReplicatedMap<K,V> {
 
     public interface Notification<K extends Serializable, V extends Serializable> {
@@ -78,25 +79,25 @@ public class ReplicatedHashMap<K extends Serializable, V extends Serializable> e
     static {
         try {
             methods=new HashMap<Short,Method>(8);
-            methods.put(PUT, ReplicatedHashMap.class.getMethod("_put",
+            methods.put(PUT, ReplicatedHashMapOld.class.getMethod("_put",
                                                                Serializable.class,
                                                                Serializable.class));
-            methods.put(PUT_IF_ABSENT, ReplicatedHashMap.class.getMethod("_putIfAbsent",
+            methods.put(PUT_IF_ABSENT, ReplicatedHashMapOld.class.getMethod("_putIfAbsent",
                                                                          Serializable.class,
                                                                          Serializable.class));
-            methods.put(PUT_ALL, ReplicatedHashMap.class.getMethod("_putAll", Map.class));
-            methods.put(REMOVE, ReplicatedHashMap.class.getMethod("_remove", Object.class));
-            methods.put(REMOVE_IF_EQUALS, ReplicatedHashMap.class.getMethod("_remove",
+            methods.put(PUT_ALL, ReplicatedHashMapOld.class.getMethod("_putAll", Map.class));
+            methods.put(REMOVE, ReplicatedHashMapOld.class.getMethod("_remove", Object.class));
+            methods.put(REMOVE_IF_EQUALS, ReplicatedHashMapOld.class.getMethod("_remove",
                                                                             Object.class,
                                                                             Object.class));
-            methods.put(REPLACE_IF_EXISTS, ReplicatedHashMap.class.getMethod("_replace",
+            methods.put(REPLACE_IF_EXISTS, ReplicatedHashMapOld.class.getMethod("_replace",
                                                                              Serializable.class,
                                                                              Serializable.class));
-            methods.put(REPLACE_IF_EQUALS, ReplicatedHashMap.class.getMethod("_replace",
+            methods.put(REPLACE_IF_EQUALS, ReplicatedHashMapOld.class.getMethod("_replace",
                                                                              Serializable.class,
                                                                              Serializable.class,
                                                                              Serializable.class));
-            methods.put(CLEAR, ReplicatedHashMap.class.getMethod("_clear"));
+            methods.put(CLEAR, ReplicatedHashMapOld.class.getMethod("_clear"));
         }
         catch(NoSuchMethodException e) {
             throw new RuntimeException(e);
@@ -124,7 +125,7 @@ public class ReplicatedHashMap<K extends Serializable, V extends Serializable> e
      * Whether updates across the cluster should be asynchronous (default) or
      * synchronous)
      */
-    protected int update_mode=Request.GET_ALL;
+    protected int update_mode=Request.GET_NONE;
 
     /**
      * For blocking updates only: the max time to wait (0 == forever)
@@ -142,7 +143,7 @@ public class ReplicatedHashMap<K extends Serializable, V extends Serializable> e
      * Constructs a new ReplicatedHashMap with channel. Call {@link #start} to
      * start this map.
      */
-    public ReplicatedHashMap(Channel channel) {
+    public ReplicatedHashMapOld(Channel channel) {
         this(channel, false);
     }
 
@@ -150,14 +151,14 @@ public class ReplicatedHashMap<K extends Serializable, V extends Serializable> e
      * Constructs a new ReplicatedHashMap with channel and persistence option.
      * Call {@link #start} to start this map.
      */
-    public ReplicatedHashMap(Channel channel,boolean persistent) {
+    public ReplicatedHashMapOld(Channel channel,boolean persistent) {
         this(new ConcurrentHashMap<K,V>(), channel, persistent);
     }
 
     /**
      * Constructs a new ReplicatedHashMap using provided map instance.
      */
-    public ReplicatedHashMap(ConcurrentMap<K,V> map,Channel channel,boolean persistent) {
+    public ReplicatedHashMapOld(ConcurrentMap<K,V> map,Channel channel,boolean persistent) {
         if(channel == null)
             throw new IllegalArgumentException("Cannot create ReplicatedHashMap with null channel");
         if(map == null)
@@ -224,8 +225,7 @@ public class ReplicatedHashMap<K extends Serializable, V extends Serializable> e
      */
     public final void start(long state_timeout) throws ChannelClosedException,
                                                ChannelNotConnectedException {
-        
-        if(!channel.isConnected()) throw new ChannelNotConnectedException();
+    	if(!channel.isConnected()) throw new ChannelNotConnectedException();
         if(!channel.isOpen()) throw new ChannelClosedException();
         send_message = channel.getView().size()>1;
         
@@ -358,10 +358,10 @@ public class ReplicatedHashMap<K extends Serializable, V extends Serializable> e
             try {
                 MethodCall call=new MethodCall(PUT, new Object[] { key, value });
                 disp.callRemoteMethods(null, call, update_mode, timeout);
-                //disp.callRemoteMethod(null, call, null);
-            } catch(Throwable e) {
+            }
+            catch(Exception e) {
                 throw new RuntimeException("put(" + key + ", " + value + ") failed", e);
-			}
+            }
         }
         else {
             return _put(key, value);
@@ -550,7 +550,8 @@ public class ReplicatedHashMap<K extends Serializable, V extends Serializable> e
 
     /*------------------------ Callbacks -----------------------*/
 
-    public V _put(K key, V value) {
+    public V _put(K key, V value)
+    {
         V retval=map.put(key, value);
         if(persistent) {
             try {
@@ -804,7 +805,7 @@ public class ReplicatedHashMap<K extends Serializable, V extends Serializable> e
 
     /*------------------- Membership Changes ----------------------*/
 
-    public void viewAccepted(View new_view) {
+    public void viewAccepted(final View new_view) {
         Vector<Address> new_mbrs=new_view.getMembers();
 
         if(new_mbrs != null) {
@@ -815,6 +816,39 @@ public class ReplicatedHashMap<K extends Serializable, V extends Serializable> e
         //if size is bigger than one, there are more peers in the group
         //otherwise there is only one server.
         send_message=members.size() > 1;
+   
+        /**
+		 * In the event of a MergeView abuse the cumulative nature of the
+		 * superclass' setState() method. By ensuring that all members of the
+		 * new merged view add the state of all the coordinators of the previous
+		 * unmerged views, everyone should end up in the same state.
+		 * 
+		 * TODO: What if the getStates() complete in different orders? Is that
+		 * possible?
+		 */
+        
+        if (new_view instanceof MergeView) {
+        	System.out.println("ReplicatedHashMap : Merge");
+        	final Runnable runnable = new Runnable() {
+	
+				@Override
+				public void run() {
+					for (final View subgroup : ((MergeView) new_view)
+							.getSubgroups()) {
+						try {
+							channel.getState(subgroup.getMembers().firstElement(), 0);
+						} catch (final ChannelNotConnectedException e) {
+							throw new IllegalStateException(
+									"channel not connected!", e);
+						} catch (final ChannelClosedException e) {
+							throw new IllegalStateException(
+									"channel is closed!", e);
+						}
+					}
+				}
+			};
+			new Thread(runnable, "map-merging").start();
+		}     
     }
 
     /**

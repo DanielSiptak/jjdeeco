@@ -27,7 +27,7 @@ public class ReplicatedLauncherCloud {
 	 */
 	public static void main(String[] args) {
 		List<Class<?>> components = Arrays.asList(new Class<?>[]{NodeA.class});
-		List<Class<?>> ensembles = Arrays.asList(new Class<?>[]{ });
+		List<Class<?>> ensembles = Arrays.asList(new Class<?>[]{ MigrationEnsemble.class});
 		KnowledgeManager km = new RepositoryKnowledgeManager(
 				new ReplicatedKnowledgeRepository());
 		Scheduler scheduler = new MultithreadedScheduler();

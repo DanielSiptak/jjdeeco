@@ -28,7 +28,6 @@ import java.util.concurrent.locks.ReentrantLock;
 import org.jgroups.Channel;
 import org.jgroups.ChannelException;
 import org.jgroups.JChannel;
-import org.jgroups.blocks.ReplicatedHashMap3;
 import org.jgroups.blocks.ReplicatedMap;
 import org.jgroups.logging.Log;
 import org.jgroups.stack.Protocol;
@@ -51,7 +50,7 @@ import cz.cuni.mff.ms.siptak.adeecolib.service.AppMessenger.AppLogger;
 public class ReplicatedKnowledgeRepository extends KnowledgeRepository {
 
 	final ReentrantLock lock = new ReentrantLock();
-	private ReplicatedMap<String, LinkedList<Object>> ts;// = new HashMap<String, List<Object>>();
+	private ReplicatedMap<String, LinkedList<Object>> map;// = new HashMap<String, List<Object>>();
 	private Channel channel = null;
 
 	private AppLogger logger = AppMessenger.getInstance().getLogger("ReplicatedHashMap");
@@ -63,12 +62,14 @@ public class ReplicatedKnowledgeRepository extends KnowledgeRepository {
 			for ( Protocol protocol: channel.getProtocolStack().getProtocols()) {
 				protocol.setLevel("debug");
 			}
-			ReplicatedHashMap3<String, LinkedList<Object>> replMap = new ReplicatedHashMap3<String, LinkedList<Object>>(channel);
+			ReplicatedHashMap<String, LinkedList<Object>> replMap = new ReplicatedHashMap<String, LinkedList<Object>>(channel);
 			replMap.start(10000);
-			ts = replMap;
+			// If synchronized facade needed
+			//map = ReplicatedHashMap.synchronizedMap(replMap);
+			map = replMap;
 			logger.addLog("Creating ReplicatedHashMap");
 		} catch (ChannelException e) {
-			ts=null;
+			map=null;
 			logger.addLog("Error with ReplicatedHashMap");
 			e.printStackTrace();
 		}
@@ -82,7 +83,7 @@ public class ReplicatedKnowledgeRepository extends KnowledgeRepository {
 		// Lock here to prevent race conditions in case the method is used out
 		// of a
 		// session. Likewise done in the rest methods.
-		List<Object> vals = ts.get(entryKey);
+		List<Object> vals = map.get(entryKey);
 
 		if (vals == null) {
 			throw new KRExceptionUnavailableEntry("Key " + entryKey
@@ -97,21 +98,21 @@ public class ReplicatedKnowledgeRepository extends KnowledgeRepository {
 	public void put(String entryKey, Object value, ISession session)
 			throws KRExceptionAccessError {
 
-		LinkedList<Object> vals = ts.get(entryKey);
+		LinkedList<Object> vals = map.get(entryKey);
 
 		if (vals == null) {
 			vals = new LinkedList<Object>();
 		}
 
 		vals.add(DeepCopy.copy(value));
-		ts.put(entryKey, vals);
+		map.put(entryKey, vals);
 	}
 
 	@Override
 	public Object[] take(String entryKey, ISession session)
 			throws KRExceptionUnavailableEntry, KRExceptionAccessError {
 
-		List<Object> vals = ts.get(entryKey);
+		List<Object> vals = map.get(entryKey);
 
 		if (vals == null) {
 			throw new KRExceptionUnavailableEntry("Key " + entryKey
@@ -119,7 +120,7 @@ public class ReplicatedKnowledgeRepository extends KnowledgeRepository {
 		}
 
 		if (vals.size() <= 1) {
-			ts.remove(entryKey);
+			map.remove(entryKey);
 		}
 
 		//vals = (List<Object>) DeepCopy.copy(vals);
@@ -154,15 +155,18 @@ public class ReplicatedKnowledgeRepository extends KnowledgeRepository {
 		return false;
 	}
 
+	/**
+	 * TODO
+	 * This method is just for TestReplication scenario 
+	 * prints list off all keys and values stored in map 
+	 */
 	public void printAll() {
 		
-		Iterator<String> iterator = ts.keySet().iterator();
+		Iterator<String> iterator = map.keySet().iterator();
 	    while(iterator.hasNext()) {
 	        String key = iterator.next();
-	    	System.out.println(key+" : "+ts.get(key));
+	    	System.out.println(key+" : "+map.get(key));
 	    }
-		
-		
 		
 	}
 
